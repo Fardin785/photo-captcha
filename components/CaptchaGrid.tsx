@@ -26,8 +26,8 @@ export default function CaptchaGrid({ image, box, onValidate }: CaptchaGridProps
   const resetCaptcha = () => {
     const { grid, targetShape, targetTint } = generateGridData(gridRows * gridCols);
     setGrid(grid);
-    setTargetShape(targetShape);
-    setTargetTint(targetTint);
+    setTargetShape(targetShape || "");
+    setTargetTint(targetTint || "");
     setSelected(new Set());
   };
 
