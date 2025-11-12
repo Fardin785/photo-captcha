@@ -11,16 +11,25 @@ interface CaptchaGridProps {
 export default function CaptchaGrid({ image, box, onValidate }: CaptchaGridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [grid, setGrid] = useState<any[]>([]);
-  const [target, setTarget] = useState<string>("");
+  const [targetShape, setTargetShape] = useState<string>("");
+  const [targetTint, setTargetTint] = useState<string>("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [attempts, setAttempts] = useState(0);
   const gridRows = 4;
   const gridCols = 4;
+  const maxAttempts = 3;
 
   useEffect(() => {
-    const { grid, targetShape } = generateGridData(gridRows * gridCols);
-    setGrid(grid);
-    setTarget(targetShape);
+    resetCaptcha();
   }, []);
+
+  const resetCaptcha = () => {
+    const { grid, targetShape, targetTint } = generateGridData(gridRows * gridCols);
+    setGrid(grid);
+    setTargetShape(targetShape);
+    setTargetTint(targetTint);
+    setSelected(new Set());
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -43,10 +52,9 @@ export default function CaptchaGrid({ image, box, onValidate }: CaptchaGridProps
     const cellW = width / gridCols;
     const cellH = height / gridRows;
 
-    ctx.strokeStyle = "white";
+    ctx.strokeStyle = "rgba(255,255,255,0.7)";
     ctx.lineWidth = 1;
 
-    // Draw horizontal + vertical lines
     for (let r = 0; r <= gridRows; r++) {
       ctx.beginPath();
       ctx.moveTo(x, y + r * cellH);
@@ -60,20 +68,32 @@ export default function CaptchaGrid({ image, box, onValidate }: CaptchaGridProps
       ctx.stroke();
     }
 
-    // Draw shapes only within locked square area
     grid.forEach((cell, i) => {
       if (!cell.hasShape) return;
       const row = Math.floor(i / gridCols);
       const col = i % gridCols;
       const cx = x + col * cellW + cellW / 2;
       const cy = y + row * cellH + cellH / 2;
-      drawShape(ctx, cell.shape, cx, cy, Math.min(cellW, cellH) / 3);
+      drawShape(ctx, cell.shape, cx, cy, Math.min(cellW, cellH) / 3, cell.tint);
     });
   };
 
-  const drawShape = (ctx: CanvasRenderingContext2D, shape: string, cx: number, cy: number, size: number) => {
-    ctx.fillStyle = "rgba(255,255,255,0.6)";
+  const drawShape = (
+    ctx: CanvasRenderingContext2D,
+    shape: string,
+    cx: number,
+    cy: number,
+    size: number,
+    tint: string
+  ) => {
+    const colorMap: Record<string, string> = {
+      red: "rgba(255, 100, 100, 0.6)",
+      green: "rgba(100, 255, 100, 0.6)",
+      blue: "rgba(100, 100, 255, 0.6)",
+    };
+    ctx.fillStyle = colorMap[tint] || "rgba(255,255,255,0.6)";
     ctx.beginPath();
+
     if (shape === "triangle") {
       ctx.moveTo(cx, cy - size);
       ctx.lineTo(cx - size, cy + size);
@@ -88,12 +108,9 @@ export default function CaptchaGrid({ image, box, onValidate }: CaptchaGridProps
     }
   };
 
-  // Handle click detection within the locked square grid
   const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
-
-    // Normalize click coords to the same coordinate space as the canvas drawing
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     const clickX = (e.clientX - rect.left) * scaleX;
@@ -114,6 +131,7 @@ export default function CaptchaGrid({ image, box, onValidate }: CaptchaGridProps
       return newSet;
     });
   };
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -127,12 +145,11 @@ export default function CaptchaGrid({ image, box, onValidate }: CaptchaGridProps
       ctx.drawImage(img, 0, 0);
       drawGrid(ctx);
 
-      // Highlight selected cells
       const { x, y, width, height } = box;
       const cellW = width / gridCols;
       const cellH = height / gridRows;
 
-      ctx.fillStyle = "rgba(255,255,255,0.3)";
+      ctx.fillStyle = "rgba(255,255,255,0.25)";
       selected.forEach((i) => {
         const row = Math.floor(i / gridCols);
         const col = i % gridCols;
@@ -142,20 +159,55 @@ export default function CaptchaGrid({ image, box, onValidate }: CaptchaGridProps
   }, [selected, grid]);
 
   const handleValidate = () => {
-    const correctIndices = grid.map((c, i) => (c.shape === target && c.hasShape ? i : null)).filter((x) => x !== null);
+    const correctIndices = grid
+      .map((c, i) => (c.shape === targetShape && c.tint === targetTint && c.hasShape ? i : null))
+      .filter((x) => x !== null);
 
     const allCorrect = correctIndices.every((i) => selected.has(i as number));
     const noExtras = [...selected].every((i) => correctIndices.includes(i));
-    onValidate(allCorrect && noExtras);
+    const passed = allCorrect && noExtras;
+
+    if (passed) {
+      onValidate(true);
+    } else {
+      const newAttempts = attempts + 1;
+      setAttempts(newAttempts);
+
+      if (newAttempts >= maxAttempts) {
+        alert("Too many failed attempts. Validation blocked.");
+        onValidate(false);
+      } else {
+        alert(`Incorrect. Try again (${maxAttempts - newAttempts} attempts left).`);
+        resetCaptcha();
+      }
+    }
   };
 
   return (
-    <div className="flex flex-col items-center mt-4">
-      <h3 className="text-blue-600 mb-2">Select all {target}s</h3>
-      <canvas ref={canvasRef} onClick={handleClick} className="cursor-crosshair border-2 border-blue-700" />
-      <button onClick={handleValidate} className="mt-4 bg-yellow-500 text-white px-4 py-2 rounded">
+    <div className="flex flex-col items-center mt-6 bg-slate-900/70 rounded-2xl p-6 shadow-lg border border-slate-700 max-w-2xl mx-auto">
+      <h3 className="text-lg font-semibold text-center text-blue-400 mb-3">
+        Select all{" "}
+        <span className="capitalize text-yellow-400">
+          {targetTint} {targetShape}s
+        </span>
+      </h3>
+
+      <canvas
+        ref={canvasRef}
+        onClick={handleClick}
+        className="cursor-crosshair border-2 border-blue-600 rounded-lg shadow-md hover:shadow-blue-500/40 transition-shadow"
+      />
+
+      <button
+        onClick={handleValidate}
+        className="mt-4 bg-gradient-to-r from-indigo-500 to-blue-600 text-white px-6 py-2 rounded-xl shadow-md hover:scale-105 transition-transform"
+      >
         Validate
       </button>
+
+      <p className="text-sm text-gray-400 mt-2">
+        Attempts: {attempts}/{maxAttempts}
+      </p>
     </div>
   );
 }
